@@ -1,2 +1,2 @@
 # NCAT-Research
-Data Science for Caner Research
+Data Science for Cancer Research
