@@ -1,9 +1,9 @@
 """
 Interactive fluorescent density heatmap.
 
-Green fluorescence is converted into the z-axis density surface. Small
-pink/red fluorescent puncta are detected separately and displayed as a
-spread/NET-like overlay on top of the surface.
+Green fluorescence is converted into the z-axis density surface. Visible
+red/orange/magenta fluorescent puncta are detected separately and displayed
+with pink markers on top of the surface.
 """
 
 import base64
@@ -76,8 +76,11 @@ def detect_pink_spread(image, roi, density):
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
     hue, sat, val = cv2.split(hsv)
 
-    red_or_magenta = ((hue < 35) | (hue > 158) | ((hue > 135) & (hue < 170)))
-    mask = (red_or_magenta & (sat > 70) & (val > 55) & roi).astype(np.uint8) * 255
+    # The plotted pink markers represent the visible warm-colored fluorescent
+    # puncta, not only pixels whose literal hue is magenta. Include red, orange,
+    # and magenta signal while excluding low-saturation labels and borders.
+    warm_fluorescence = (hue < 35) | (hue >= 135)
+    mask = (warm_fluorescence & (sat > 70) & (val > 55) & roi).astype(np.uint8) * 255
 
     total_labels, labels, stats, centers = cv2.connectedComponentsWithStats(mask, 8)
     kept = np.zeros(mask.shape, dtype=np.uint8)
@@ -87,7 +90,9 @@ def detect_pink_spread(image, roi, density):
         x, y, w, h, area = stats[label_id]
         cx, cy = centers[label_id]
 
-        if area < 1 or area > 260:
+        # Reject isolated 1-2 pixel compression/noise while retaining small,
+        # visually identifiable fluorescent puncta.
+        if area < 3 or area > 260:
             continue
         if w > 30 or h > 30:
             continue
@@ -160,10 +165,6 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
 
     source_b64 = encode_source_image()
     mean_density = round(float(np.mean(spot_density)), 3) if spot_density else 0
-    first_x = spot_x[0] if spot_x else width / 2
-    first_y = spot_y[0] if spot_y else height / 2
-    first_z = spot_z[0] if spot_z else 0.5
-
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -237,13 +238,9 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
 <body>
   <div id="plot"></div>
   <div class="panel">
-    <div><b>Pink spot finder:</b> {len(spots)} pink/red spots detected.</div>
-    <div>Use the buttons below. The selected spot becomes a large yellow marker on the heatmap.</div>
+    <div><b>Fluorescent puncta finder:</b> {len(spots)} visible spots detected.</div>
+    <div>Pink markers show red/orange/magenta fluorescent puncta; isolated pixel noise is excluded.</div>
     <div class="controls">
-      <div class="row">
-        <button id="focusButton" type="button">Strongest spot</button>
-        <button id="nextButton" type="button">Next spot</button>
-      </div>
       <div class="row">
         <button id="pinkButton" type="button">Pink only</button>
         <button id="allButton" type="button">All</button>
@@ -253,7 +250,6 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
         <button id="resetButton" type="button">Reset view</button>
       </div>
     </div>
-    <div class="readout" id="spotReadout"></div>
     <div>Mean local density around pink signal: {mean_density}</div>
     <img class="thumb" alt="source fluorescence image" src="data:image/png;base64,{source_b64}">
   </div>
@@ -307,7 +303,7 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
       {{
         type: "scatter3d",
         mode: "markers",
-        name: "Pink / NET-like puncta",
+        name: "Fluorescent puncta (pink markers)",
         x: spotX,
         y: spotY,
         z: spotZ,
@@ -319,30 +315,12 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
           line: {{ color: "#ffffff", width: 1 }},
           opacity: 0.95
         }},
-        hovertemplate: "pink signal<br>x=%{{x:.1f}} px<br>y=%{{y:.1f}} px<br>local density=%{{customdata[1]:.3f}}<extra></extra>"
-      }},
-      {{
-        type: "scatter3d",
-        mode: "markers+text",
-        name: "Selected pink spot",
-        x: [{first_x}],
-        y: [{first_y}],
-        z: [{first_z}],
-        text: ["selected pink spot"],
-        textposition: "top center",
-        marker: {{
-          color: "#ffe600",
-          size: 11,
-          symbol: "diamond",
-          line: {{ color: "#000000", width: 2 }},
-          opacity: 1
-        }},
-        hovertemplate: "selected pink spot<br>x=%{{x:.1f}} px<br>y=%{{y:.1f}} px<extra></extra>"
+        hovertemplate: "fluorescent punctum<br>x=%{{x:.1f}} px<br>y=%{{y:.1f}} px<br>local density=%{{customdata[1]:.3f}}<extra></extra>"
       }}
     ];
 
     const layout = {{
-      title: {{ text: "Interactive Fluorescent Density Heatmap with Pink Spread Overlay", x: 0.5 }},
+      title: {{ text: "Interactive Fluorescent Density Heatmap with Puncta Overlay", x: 0.5 }},
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
       font: {{ color: "#1f2933" }},
@@ -363,9 +341,9 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
         y: 1.03,
         xanchor: "center",
         buttons: [
-          {{ label: "All overlays", method: "restyle", args: [{{ visible: [true, true, true, true] }}] }},
-          {{ label: "Density only", method: "restyle", args: [{{ visible: [true, false, false, false] }}] }},
-          {{ label: "Pink only", method: "restyle", args: [{{ visible: [false, true, true, true] }}] }}
+          {{ label: "All overlays", method: "restyle", args: [{{ visible: [true, true, true] }}] }},
+          {{ label: "Density only", method: "restyle", args: [{{ visible: [true, false, false] }}] }},
+          {{ label: "Pink only", method: "restyle", args: [{{ visible: [false, true, true] }}] }}
         ]
       }}]
     }};
@@ -376,49 +354,12 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
       modeBarButtonsToRemove: ["lasso2d", "select2d"]
     }};
 
-    const spotReadout = document.getElementById("spotReadout");
-    let selectedIndex = 0;
-
-    function readoutText(index) {{
-      const spot = spots[index];
-      if (!spot) return "No pink spot selected.";
-      return `Selected #${{index + 1}}: x=${{spot.x}} px, y=${{spot.y}} px, local density=${{spot.density}}.`;
-    }}
-
-    function focusSpot(index) {{
-      const spot = spots[index];
-      if (!spot) return;
-      selectedIndex = index;
-      const z = Math.min(1.06, Math.max(0.06, spot.density + 0.07));
-      Plotly.restyle("plot", {{
-        x: [[spot.x]],
-        y: [[spot.y]],
-        z: [[z]],
-        text: [[`spot #${{index + 1}}`]]
-      }}, [3]);
-      spotReadout.textContent = readoutText(index);
-      Plotly.restyle("plot", {{ visible: [true, true, true, true] }});
-      Plotly.relayout("plot", {{
-        "scene.camera.eye": {{ x: 1.15, y: -1.45, z: 0.86 }},
-        "scene.camera.center": {{
-          x: (spot.x - {width / 2}) / {width},
-          y: ({height / 2} - spot.y) / {height},
-          z: 0
-        }}
-      }});
-    }}
-
-    function nextSpot() {{
-      if (!spots.length) return;
-      focusSpot((selectedIndex + 1) % spots.length);
-    }}
-
     function showAll() {{
-      Plotly.restyle("plot", {{ visible: [true, true, true, true] }});
+      Plotly.restyle("plot", {{ visible: [true, true, true] }});
     }}
 
     function showPinkOnly() {{
-      Plotly.restyle("plot", {{ visible: [false, true, true, true] }});
+      Plotly.restyle("plot", {{ visible: [false, true, true] }});
     }}
 
     function topDown() {{
@@ -437,14 +378,12 @@ def write_html(x_values, y_values, density_grid, pink_grid, spots, width, height
       }});
     }}
 
-    document.getElementById("focusButton").addEventListener("click", () => focusSpot(0));
-    document.getElementById("nextButton").addEventListener("click", nextSpot);
     document.getElementById("pinkButton").addEventListener("click", showPinkOnly);
     document.getElementById("allButton").addEventListener("click", showAll);
     document.getElementById("topButton").addEventListener("click", topDown);
     document.getElementById("resetButton").addEventListener("click", resetView);
 
-    Plotly.newPlot("plot", data, layout, config).then(() => focusSpot(0));
+    Plotly.newPlot("plot", data, layout, config);
   </script>
 </body>
 </html>
@@ -485,7 +424,7 @@ def main():
         height,
     )
 
-    print(f"Detected {len(spots)} pink/red puncta.")
+    print(f"Detected {len(spots)} red/orange/magenta fluorescent puncta.")
     print(f"Saved interactive heatmap: {OUTPUT_FILE}")
     print(f"Saved pink detection QA overlay: {QA_FILE}")
 
